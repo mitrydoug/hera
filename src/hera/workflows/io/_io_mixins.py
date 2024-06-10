@@ -2,6 +2,7 @@ from typing import TYPE_CHECKING, List, Optional, Union
 
 from hera.shared._pydantic import _PYDANTIC_VERSION, get_field_annotations, get_fields
 from hera.shared.serialization import MISSING, serialize
+from hera.workflows._annotation_util import get_io_annotation
 from hera.workflows._context import _context
 from hera.workflows.artifact import Artifact
 from hera.workflows.models import (
@@ -36,6 +37,10 @@ else:
     # Subclassing `object` when using the real code (i.e. not type-checking) is basically a no-op
     BaseModel = object  # type: ignore
 
+class IOField(V2BaseModel):
+    type_annotation: Type
+    io_annotation: Union[Parameter, Artifact]
+
 
 class InputMixin(BaseModel):
     def __new__(cls, **kwargs):
@@ -56,6 +61,48 @@ class InputMixin(BaseModel):
             return
 
         super().__init__(**kwargs)
+
+    @classmethod
+    def _get_fields(cls, object_override: Optional[Self] = None) -> List[IOField]:
+        
+        io_fields = []
+        annotations = get_field_annotations(cls)
+        
+        for field, field_info in get_fields(cls).items():
+            if get_origin(annotations[field]) is Annotated:
+                io_field = get_io_annotation(annotations[field])
+                if io_field:
+                    if io_field.name is None:
+                        io_field.name = field
+                    if isinstance(io_field, Parameter):
+                        param = io_field
+                        if object_override:
+                            param.default = serialize(getattr(object_override, field))
+                        elif field_info.default is not None and field_info.default != PydanticUndefined:  # type: ignore
+                            # Serialize the value (usually done in Parameter's validator)
+                            param.default = serialize(field_info.default)  # type: ignore
+                        io_fields.append(param)
+                    elif isinstance(io_field, Artifact):
+                        artifact = io_field
+                        if artifact.path is None:
+                            artifact.path = artifact._get_default_inputs_path()
+                        io_fields.append(artifact)
+                else:
+                    pass
+            else:
+                # Create a Parameter from basic type annotations
+                default = getattr(object_override, field) if object_override else field_info.default
+
+                # For users on Pydantic 2 but using V1 BaseModel, we still need to check if `default` is None
+                if default is None or default == PydanticUndefined:
+                    default = MISSING
+
+                parameters.append(Parameter(name=field, default=default))
+
+        return parameters
+
+
+
 
     @classmethod
     def _get_parameters(cls, object_override: Optional[Self] = None) -> List[Parameter]:
