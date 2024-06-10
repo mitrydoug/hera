@@ -12,6 +12,7 @@ from typing import Any, Callable, Dict, List, Optional, cast
 from hera.shared._pydantic import _PYDANTIC_VERSION
 from hera.shared.serialization import serialize
 from hera.workflows import Artifact, Parameter
+from hera.workflows._annotation_util import get_input_annotation
 from hera.workflows._runner.script_annotations_util import (
     _map_argo_inputs_to_function,
     _save_annotated_return_outputs,
@@ -147,8 +148,8 @@ def _is_artifact_loaded(key: str, f: Callable) -> bool:
     param = inspect.signature(f).parameters[key]
     return (
         get_origin(param.annotation) is Annotated
-        and isinstance(get_args(param.annotation)[1], Artifact)
-        and get_args(param.annotation)[1].loader == ArtifactLoader.json.value
+        and isinstance(get_input_annotation(param.annotation), Artifact)
+        and get_input_annotation(param.annotation).loader == ArtifactLoader.json.value
     )
 
 
@@ -157,8 +158,8 @@ def _is_output_kwarg(key: str, f: Callable) -> bool:
     param = inspect.signature(f).parameters[key]
     return (
         get_origin(param.annotation) is Annotated
-        and isinstance(get_args(param.annotation)[1], (Artifact, Parameter))
-        and get_args(param.annotation)[1].output
+        and isinstance(get_input_annotation(param.annotation), (Artifact, Parameter))
+        and get_input_annotation(param.annotation).output
     )
 
 

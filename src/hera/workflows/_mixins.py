@@ -18,6 +18,7 @@ from typing import (
 from hera.shared import BaseMixin, global_config
 from hera.shared._pydantic import PrivateAttr, get_field_annotations, get_fields, root_validator, validator
 from hera.shared.serialization import serialize
+from hera.workflows._annotation_util import get_input_annotation
 from hera.workflows._context import SubNodeMixin, _context
 from hera.workflows._meta_mixins import CallableTemplateMixin, HeraBuildObj, HookMixin
 from hera.workflows.artifact import Artifact
@@ -71,9 +72,9 @@ from hera.workflows.user_container import UserContainer
 from hera.workflows.volume import Volume, _BaseVolume
 
 try:
-    from typing import Annotated, get_args, get_origin  # type: ignore
+    from typing import Annotated, get_origin  # type: ignore
 except ImportError:
-    from typing_extensions import Annotated, get_args, get_origin  # type: ignore
+    from typing_extensions import Annotated, get_origin  # type: ignore
 
 
 T = TypeVar("T")
@@ -737,7 +738,7 @@ class TemplateInvocatorSubNodeMixin(BaseMixin):
                     return result_templated_str
 
                 if get_origin(annotations[name]) is Annotated:
-                    annotation = get_args(annotations[name])[1]
+                    annotation = get_input_annotation(annotations[name])
 
                     if not isinstance(annotation, (Parameter, Artifact)):
                         return f"{{{{{subnode_type}.{subnode_name}.outputs.parameters.{name}}}}}"

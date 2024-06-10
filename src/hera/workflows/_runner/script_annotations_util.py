@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Type, TypeVar, Un
 from hera.shared._pydantic import BaseModel, get_field_annotations, get_fields
 from hera.shared.serialization import serialize
 from hera.workflows import Artifact, Parameter
+from hera.workflows._annotation_util import get_input_annotation
 from hera.workflows.artifact import ArtifactLoader
 from hera.workflows.io.v1 import (
     Input as InputV1,
@@ -153,28 +154,25 @@ def map_runner_input(
     ) -> Any:
         annotation = runner_input_annotations.get(field)
         assert annotation is not None, "RunnerInput fields must be type-annotated"
+
         if get_origin(annotation) is Annotated:
-            # my_field: Annotated[int, ...]
             ann_type = get_args(annotation)[0]
-            meta_annotations = [md for md in get_args(annotation)[1:] if isinstance(md, (Parameter, Artifact))]
+            input_ann = get_input_annotation(annotation)
         else:
             # my_field: int
             ann_type = annotation
-            meta_annotations = []
+            input_ann = None
 
-        if len(meta_annotations) > 1:
-            raise ValueError("hera.workflows.io.Input fields may only have one Parameter or Artifact annotation.")
-        elif len(meta_annotations) == 1:
-            meta_annotation = meta_annotations[0]
-            if isinstance(meta_annotation, Parameter):
-                assert not meta_annotation.output
+        if input_ann:
+            if isinstance(input_ann, Parameter):
+                assert not input_ann.output
                 return load_parameter_value(
-                    _get_annotated_input_param_value(field, meta_annotation, kwargs),
+                    _get_annotated_input_param_value(field, input_ann, kwargs),
                     ann_type,
                 )
 
-            if isinstance(meta_annotation, Artifact):
-                return get_annotated_artifact_value(meta_annotation)
+            if isinstance(input_ann, Artifact):
+                return get_annotated_artifact_value(input_ann)
         else:
             return load_parameter_value(kwargs[field], ann_type)
 
@@ -202,7 +200,7 @@ def _map_argo_inputs_to_function(function: Callable, kwargs: Dict[str, str]) -> 
 
     for func_param_name, func_param in inspect.signature(function).parameters.items():
         if get_origin(func_param.annotation) is Annotated:
-            func_param_annotation = get_args(func_param.annotation)[1]
+            func_param_annotation = get_input_annotation(func_param.annotation)
 
             if isinstance(func_param_annotation, Parameter):
                 mapped_kwargs[func_param_name] = get_annotated_param_value(

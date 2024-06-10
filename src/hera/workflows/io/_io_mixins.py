@@ -2,6 +2,7 @@ from typing import TYPE_CHECKING, List, Optional, Union
 
 from hera.shared._pydantic import _PYDANTIC_VERSION, get_field_annotations, get_fields
 from hera.shared.serialization import MISSING, serialize
+from hera.workflows._annotation_util import get_input_annotation
 from hera.workflows._context import _context
 from hera.workflows.artifact import Artifact
 from hera.workflows.models import (
@@ -64,8 +65,10 @@ class InputMixin(BaseModel):
 
         for field, field_info in get_fields(cls).items():
             if get_origin(annotations[field]) is Annotated:
-                param = get_args(annotations[field])[1]
+                param = get_input_annotation(annotations[field])
                 if isinstance(param, Parameter):
+                    if not param.name:
+                        param.name = field
                     if object_override:
                         param.default = serialize(getattr(object_override, field))
                     elif field_info.default is not None and field_info.default != PydanticUndefined:  # type: ignore
@@ -91,8 +94,10 @@ class InputMixin(BaseModel):
 
         for field in get_fields(cls):
             if get_origin(annotations[field]) is Annotated:
-                artifact = get_args(annotations[field])[1]
+                artifact = get_input_annotation(annotations[field])
                 if isinstance(artifact, Artifact):
+                    if artifact.name is None:
+                        artifact.name = field
                     if artifact.path is None:
                         artifact.path = artifact._get_default_inputs_path()
                     artifacts.append(artifact)
@@ -111,8 +116,8 @@ class InputMixin(BaseModel):
 
         for field in cls_fields:
             if get_origin(annotations[field]) is Annotated:
-                annotation = get_args(annotations[field])[1]
-                if isinstance(annotation, (Artifact, Parameter)):
+                annotation = get_input_annotation(annotations[field])
+                if annotation:
                     name = annotation.name
                     if isinstance(annotation, Parameter):
                         object_dict[field] = "{{inputs.parameters." + f"{name}" + "}}"
@@ -139,7 +144,7 @@ class InputMixin(BaseModel):
             templated_value = serialize(self_dict[field])
 
             if get_origin(annotations[field]) is Annotated:
-                annotation = get_args(annotations[field])[1]
+                annotation = get_input_annotation(annotations[field])
                 if isinstance(annotation, Parameter) and annotation.name:
                     params.append(ModelParameter(name=annotation.name, value=templated_value))
                 elif isinstance(annotation, Artifact) and annotation.name:
@@ -179,8 +184,9 @@ class OutputMixin(BaseModel):
             if field in {"exit_code", "result"}:
                 continue
             if get_origin(annotations[field]) is Annotated:
-                if isinstance(get_args(annotations[field])[1], (Parameter, Artifact)):
-                    outputs.append(get_args(annotations[field])[1])
+                input_ann = get_input_annotation(annotations[field])
+                if input_ann:
+                    outputs.append(input_ann)
             else:
                 # Create a Parameter from basic type annotations
                 default = model_fields[field].default
@@ -194,8 +200,9 @@ class OutputMixin(BaseModel):
         annotations = get_field_annotations(cls)
         annotation = annotations[field_name]
         if get_origin(annotation) is Annotated:
-            if isinstance(get_args(annotation)[1], (Parameter, Artifact)):
-                return get_args(annotation)[1]
+            input_ann = get_input_annotation(get_args(annotation))
+            if input_ann:
+                return input_ann
 
         # Create a Parameter from basic type annotations
         default = get_fields(cls)[field_name].default
@@ -223,7 +230,7 @@ class OutputMixin(BaseModel):
             templated_value = self_dict[field]  # a string such as `"{{tasks.task_a.outputs.parameter.my_param}}"`
 
             if get_origin(annotations[field]) is Annotated:
-                annotation = get_args(annotations[field])[1]
+                annotation = get_input_annotation(annotations[field])
                 if isinstance(annotation, Parameter) and annotation.name:
                     outputs.append(Parameter(name=annotation.name, value_from=ValueFrom(parameter=templated_value)))
                 elif isinstance(annotation, Artifact) and annotation.name:
