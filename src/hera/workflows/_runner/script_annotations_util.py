@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, TypeVar, Union, cast
 
-from hera.shared._pydantic import BaseModel, get_fields
+from hera.shared._pydantic import BaseModel, get_field_annotations, get_fields
 from hera.shared.serialization import serialize
 from hera.workflows import Artifact, Parameter
 from hera.workflows.artifact import ArtifactLoader
@@ -145,24 +145,38 @@ def map_runner_input(
         except json.JSONDecodeError:
             return value
 
+    runner_input_annotations = get_field_annotations(runner_input_class)
+
     def map_field(
         field: str,
         kwargs: Dict[str, str],
     ) -> Any:
-        annotation = runner_input_class.__annotations__[field]
+        annotation = runner_input_annotations.get(field)
+        assert annotation is not None, "RunnerInput fields must be type-annotated"
         if get_origin(annotation) is Annotated:
-            meta_annotation = get_args(annotation)[1]
+            # my_field: Annotated[int, ...]
+            ann_type = get_args(annotation)[0]
+            meta_annotations = [md for md in get_args(annotation)[1:] if isinstance(md, (Parameter, Artifact))]
+        else:
+            # my_field: int
+            ann_type = annotation
+            meta_annotations = []
+
+        if len(meta_annotations) > 1:
+            raise ValueError("hera.workflows.io.Input fields may only have one Parameter or Artifact annotation.")
+        elif len(meta_annotations) == 1:
+            meta_annotation = meta_annotations[0]
             if isinstance(meta_annotation, Parameter):
                 assert not meta_annotation.output
                 return load_parameter_value(
                     _get_annotated_input_param_value(field, meta_annotation, kwargs),
-                    get_args(annotation)[0],
+                    ann_type,
                 )
 
             if isinstance(meta_annotation, Artifact):
                 return get_annotated_artifact_value(meta_annotation)
-
-        return load_parameter_value(kwargs[field], annotation)
+        else:
+            return load_parameter_value(kwargs[field], ann_type)
 
     for field in get_fields(runner_input_class):
         input_model_obj[field] = map_field(field, kwargs)

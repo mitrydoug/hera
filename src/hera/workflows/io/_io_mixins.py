@@ -1,7 +1,9 @@
-from typing import TYPE_CHECKING, List, Optional, Union
+from typing import TYPE_CHECKING, List, Optional, Type, Union
 
 from hera.shared._pydantic import _PYDANTIC_VERSION, get_field_annotations, get_fields
+from hera.shared._pydantic import BaseModel as _shared_BaseModel
 from hera.shared.serialization import MISSING, serialize
+from hera.workflows._annotation_util import get_io_annotation
 from hera.workflows._context import _context
 from hera.workflows.artifact import Artifact
 from hera.workflows.models import (
@@ -37,6 +39,11 @@ else:
     BaseModel = object  # type: ignore
 
 
+class IOField(_shared_BaseModel):
+    type_annotation: Type
+    io_annotation: Union[Parameter, Artifact]
+
+
 class InputMixin(BaseModel):
     def __new__(cls, **kwargs):
         if _context.declaring:
@@ -58,21 +65,34 @@ class InputMixin(BaseModel):
         super().__init__(**kwargs)
 
     @classmethod
-    def _get_parameters(cls, object_override: Optional[Self] = None) -> List[Parameter]:
-        parameters = []
+    def _get_fields(cls, object_override: Optional[Self] = None) -> List[IOField]:
+        io_fields = []
         annotations = get_field_annotations(cls)
 
         for field, field_info in get_fields(cls).items():
-            if get_origin(annotations[field]) is Annotated:
-                param = get_args(annotations[field])[1]
-                if isinstance(param, Parameter):
+            annotation = annotations[field]
+            if get_origin(annotation) is Annotated and get_io_annotation(annotation) is not None:
+                type_ann = get_args(annotation)[0]
+                io_annotation = get_io_annotation(annotation)
+                assert io_annotation is not None
+                if io_annotation.name is None:
+                    io_annotation.name = field
+                if isinstance(io_annotation, Parameter):
+                    param = io_annotation
                     if object_override:
                         param.default = serialize(getattr(object_override, field))
                     elif field_info.default is not None and field_info.default != PydanticUndefined:  # type: ignore
                         # Serialize the value (usually done in Parameter's validator)
                         param.default = serialize(field_info.default)  # type: ignore
-                    parameters.append(param)
+                    io_fields.append(IOField(type_annotation=type_ann, io_annotation=param))
+                elif isinstance(io_annotation, Artifact):
+                    artifact = io_annotation
+                    if artifact.path is None:
+                        artifact.path = artifact._get_default_inputs_path()
+                    io_fields.append(IOField(type_annotation=type_ann, io_annotation=io_annotation))
             else:
+                type_ann = get_args(annotation)[0] if get_origin(annotation) is Annotated else annotation
+
                 # Create a Parameter from basic type annotations
                 default = getattr(object_override, field) if object_override else field_info.default
 
@@ -80,23 +100,19 @@ class InputMixin(BaseModel):
                 if default is None or default == PydanticUndefined:
                     default = MISSING
 
-                parameters.append(Parameter(name=field, default=default))
+                io_fields.append(
+                    IOField(type_annotation=type_ann, io_annotation=Parameter(name=field, default=default))
+                )
 
-        return parameters
+        return io_fields
+
+    @classmethod
+    def _get_parameters(cls, object_override: Optional[Self] = None) -> List[Parameter]:
+        return [io_fld.io_annotation for io_fld in cls._get_fields() if isinstance(io_fld.io_annotation, Parameter)]
 
     @classmethod
     def _get_artifacts(cls) -> List[Artifact]:
-        artifacts = []
-        annotations = get_field_annotations(cls)
-
-        for field in get_fields(cls):
-            if get_origin(annotations[field]) is Annotated:
-                artifact = get_args(annotations[field])[1]
-                if isinstance(artifact, Artifact):
-                    if artifact.path is None:
-                        artifact.path = artifact._get_default_inputs_path()
-                    artifacts.append(artifact)
-        return artifacts
+        return [io_fld.io_annotation for io_fld in cls._get_fields() if isinstance(io_fld.io_annotation, Artifact)]
 
     @classmethod
     def _get_inputs(cls) -> List[Union[Artifact, Parameter]]:

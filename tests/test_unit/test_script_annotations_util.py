@@ -16,6 +16,11 @@ from hera.workflows.io import Input
 from hera.workflows.models import ValueFrom
 from hera.workflows.parameter import Parameter
 
+try:
+    from typing import Annotated
+except ImportError:
+    from typing_extensions import Annotated
+
 
 @pytest.mark.parametrize(
     "destination,expected_path",
@@ -174,3 +179,96 @@ def test_map_runner_input_strings():
         a_dict_str=json.dumps({"key": "value"}),
         a_list_str=json.dumps([1, 2, 3]),
     )
+
+
+def test_map_runner_input_annotated_parameter():
+    """Test annotated Parameter."""
+
+    class Foo(Input):
+        foo: Annotated[str, Parameter(name="bar")]
+
+    kwargs = {"foo": "hello"}
+    assert map_runner_input(Foo, kwargs) == Foo(foo="hello")
+    kwargs = {"bar": "there"}
+    assert map_runner_input(Foo, kwargs) == Foo(foo="there")
+
+
+def test_map_runner_input_parameter_last_annotation():
+    """Test annotated Parameter in third position."""
+
+    class Foo(Input):
+        # None standing in for something like pydantic.BeforeValidator
+        foo: Annotated[str, None, Parameter(name="foo")]
+
+    kwargs = {"foo": "hello"}
+    map_runner_input(Foo, kwargs)
+
+
+def test_map_runner_input_output_parameter_disallowed():
+    """Test annotated output Parameter is not allowed."""
+
+    class Foo(Input):
+        foo: Annotated[str, Parameter(name="bar", output=True)]
+
+    with pytest.raises(AssertionError):
+        kwargs = {"foo": "hello"}
+        map_runner_input(Foo, kwargs)
+
+
+def test_map_runner_input_multi_parameter_disallowed():
+    """Test annotated multiple Parameters is not allowed."""
+
+    class Foo(Input):
+        foo: Annotated[str, Parameter(name="bar", output=True), Parameter(name="baz", output=True)]
+
+    with pytest.raises(ValueError):
+        kwargs = {"foo": "hello"}
+        map_runner_input(Foo, kwargs)
+
+
+def test_map_runner_input_annotated_artifact(tmp_path):
+    """Test annotated Artifact."""
+
+    foo_path = tmp_path / "foo"
+    foo_path.write_text("hello there")
+
+    class Foo(Input):
+        foo: Annotated[str, Artifact(name="bar", path=str(foo_path), loader=ArtifactLoader.file)]
+
+    assert map_runner_input(Foo, {}) == Foo(foo="hello there")
+
+
+def test_map_runner_input_annotated_inheritance():
+    """Test model inheritance with Annotated fields."""
+
+    class Foo(Input):
+        foo: Annotated[str, Parameter(name="foo")]
+
+    class FooBar(Foo):
+        bar: Annotated[str, Parameter(name="bar")]
+
+    kwargs = {"foo": "hello", "bar": "there"}
+    assert map_runner_input(FooBar, kwargs) == FooBar(**kwargs)
+
+
+def test_map_runner_input_annotated_inheritance_override():
+    """Test model inheritance with Annotated fields."""
+
+    class Foo(Input):
+        foo: Annotated[str, Parameter(name="foo")]
+
+    class FooBar(Foo):
+        foo: Annotated[str, Parameter(name="bar")]
+
+    kwargs = {"bar": "hello"}
+    assert map_runner_input(FooBar, kwargs) == FooBar(foo="hello")
+
+
+def test_map_runner_input_annotated_parameter_noname():
+    """Test Annotated Parameter with no name."""
+
+    class Foo(Input):
+        foo: Annotated[str, Parameter(description="a parameter")]
+
+    kwargs = {"foo": "hello"}
+    assert map_runner_input(Foo, kwargs) == Foo(foo="hello")
